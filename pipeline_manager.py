@@ -41,20 +41,19 @@ class PipelineManager:
         # Convert to numpy array
         inv_masses = np.array(inv_masses)
 
-        # Plot the histogram
+     
         plt.figure(figsize=(8, 6))
         n, bins, patches = plt.hist(inv_masses, bins=50, density=True, histtype='step', label='Invariant Mass (GeV/c^2)', color='darkblue')
 
         # Fit a Gaussian to the invariant mass data
         mu, std = norm.fit(inv_masses)
 
-        # Plot the Gaussian fit
+      
         xmin, xmax = plt.xlim()
         x = np.linspace(xmin, xmax, 100)
         p = norm.pdf(x, mu, std)
         plt.plot(x, p, 'r--', linewidth=2, label=f'Gaussian Fit: mean={mu:.2f}, std={std:.2f}')
 
-        # Add labels, title, and legend
         plt.xlabel('Invariant Mass (GeV/c^2)')
         plt.ylabel('Probability Density')
         plt.title('Invariant Mass Distribution with Gaussian Fit')
@@ -88,17 +87,15 @@ class PipelineManager:
                     pt = np.sqrt(muon_px[event][i]**2 + muon_py[event][i]**2)
                     muon_pt.append(pt)
 
-        # Plot transverse momentum distribution for all muons
         plt.figure(figsize=(8, 6))
         plt.hist(muon_pt, bins=50, histtype='step', label='Muon pt', color='darkgreen')
 
-        # Add labels, title, and legend
+    
         plt.xlabel('Transverse Momentum (GeV/c)')
         plt.ylabel('Number of Muons')
         plt.title('Muon pt Distribution')
         plt.legend(loc='upper right')
 
-        # Add grid
         plt.grid(True, linestyle='--', alpha=0.7)
 
         # Save plot
