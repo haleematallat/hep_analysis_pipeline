@@ -1,85 +1,115 @@
-from pyspark_executor import PySparkExecutor
 from io_handlers import ROOTReader
-from converters import EventConverter
+from physics_analysis import calculate_invariant_mass
 import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
+from scipy.stats import norm
+import os
 
 class PipelineManager:
-    def __init__(self):
-        self.executor = PySparkExecutor()
+    def __init__(self, file_path):
+        self.reader = ROOTReader(file_path)
+        self.output_dir = "output_plots"
+        os.makedirs(self.output_dir, exist_ok=True)  # Ensure output directory exists
 
-    def load_data(self, input_file):
-        reader = ROOTReader(input_file)
-        events = reader.read_events()
-        converter = EventConverter(self.executor.spark)
-        return converter.to_spark(events)
+    def run_analysis(self):
+        # Read the tree data
+        data = self.reader.read_tree("events;1")
 
-    def analyze_data(self, spark_df):
-        # Convert Spark DataFrame to Pandas for analysis
-        pandas_df = spark_df.toPandas()
+        # Extract muon kinematic data (these are lists of arrays due to variable-length structure)
+        muon_px = data["Muon_Px"].to_numpy()
+        muon_py = data["Muon_Py"].to_numpy()
+        muon_pz = data["Muon_Pz"].to_numpy()
+        muon_E = data["Muon_E"].to_numpy()
+        n_muons = data["NMuon"].to_numpy()
 
-        # Example columns (these may differ based on your ROOT file structure)
-        pt1 = pandas_df['pt1']
-        pt2 = pandas_df['pt2']
-        eta1 = pandas_df['eta1']
-        eta2 = pandas_df['eta2']
-        phi1 = pandas_df['phi1']
-        phi2 = pandas_df['phi2']
-        
-        # Calculate invariant mass
-        def calculate_invariant_mass(pt1, pt2, eta1, eta2, phi1, phi2):
-            mass1 = 0.105  # muon mass in GeV/c^2, example
-            mass2 = 0.105  # muon mass in GeV/c^2, example
-            
-            E1 = np.sqrt(pt1**2 + mass1**2)
-            E2 = np.sqrt(pt2**2 + mass2**2)
-            px1 = pt1 * np.cos(phi1)
-            py1 = pt1 * np.sin(phi1)
-            pz1 = pt1 * np.sinh(eta1)
-            px2 = pt2 * np.cos(phi2)
-            py2 = pt2 * np.sin(phi2)
-            pz2 = pt2 * np.sinh(eta2)
-            
-            # Calculate invariant mass
-            E_total = E1 + E2
-            px_total = px1 + px2
-            py_total = py1 + py2
-            pz_total = pz1 + pz2
-            invariant_mass = np.sqrt(E_total**2 - (px_total**2 + py_total**2 + pz_total**2))
-            return invariant_mass
+        # Invariant mass calculation for muon pairs (consider events with at least 2 muons)
+        inv_masses = []
+        for event in range(len(n_muons)):
+            if n_muons[event] >= 2:  # Only consider events with at least 2 muons
+                px1, py1, pz1, E1 = muon_px[event][0], muon_py[event][0], muon_pz[event][0], muon_E[event][0]
+                px2, py2, pz2, E2 = muon_px[event][1], muon_py[event][1], muon_pz[event][1], muon_E[event][1]
+                inv_mass = calculate_invariant_mass(px1, py1, pz1, E1, px2, py2, pz2, E2)
+                inv_masses.append(inv_mass)
 
-        invariant_mass = calculate_invariant_mass(pt1, pt2, eta1, eta2, phi1, phi2)
-        
-        # Add invariant mass to the DataFrame
-        pandas_df['invariant_mass'] = invariant_mass
+        # Save invariant mass distribution and statistics
+        self.plot_invariant_mass(inv_masses)
 
-        # Plot the invariant mass distribution
-        plt.hist(invariant_mass, bins=50, histtype='step', label='Invariant Mass (GeV/c^2)')
+        # Plot and save transverse momentum distribution for the first muon
+        self.plot_transverse_momentum(muon_px, muon_py, n_muons)
+
+    def plot_invariant_mass(self, inv_masses):
+        # Convert to numpy array
+        inv_masses = np.array(inv_masses)
+
+        # Plot the histogram
+        plt.figure(figsize=(8, 6))
+        n, bins, patches = plt.hist(inv_masses, bins=50, density=True, histtype='step', label='Invariant Mass (GeV/c^2)', color='darkblue')
+
+        # Fit a Gaussian to the invariant mass data
+        mu, std = norm.fit(inv_masses)
+
+        # Plot the Gaussian fit
+        xmin, xmax = plt.xlim()
+        x = np.linspace(xmin, xmax, 100)
+        p = norm.pdf(x, mu, std)
+        plt.plot(x, p, 'r--', linewidth=2, label=f'Gaussian Fit: mean={mu:.2f}, std={std:.2f}')
+
+        # Add labels, title, and legend
         plt.xlabel('Invariant Mass (GeV/c^2)')
-        plt.ylabel('Events')
-        plt.title('Invariant Mass Distribution')
-        plt.legend()
+        plt.ylabel('Probability Density')
+        plt.title('Invariant Mass Distribution with Gaussian Fit')
+        plt.legend(loc='upper right')
+
+        # Add grid
+        plt.grid(True, linestyle='--', alpha=0.7)
+
+        # Save plot
+        plot_path = os.path.join(self.output_dir, "invariant_mass_distribution.png")
+        plt.savefig(plot_path)
+        print(f"Invariant Mass plot saved to {plot_path}")
+
+        # Save results to a text file
+        result_path = os.path.join(self.output_dir, "invariant_mass_results.txt")
+        with open(result_path, "w") as f:
+            f.write(f"Gaussian Fit Results:\n")
+            f.write(f"Mean: {mu:.2f} GeV/c^2\n")
+            f.write(f"Standard Deviation: {std:.2f} GeV/c^2\n")
+        print(f"Invariant Mass results saved to {result_path}")
+
+        # Show the plot
         plt.show()
 
-        # Plot the pt distribution
-        plt.hist(pt1, bins=50, histtype='step', label='pt1')
-        plt.hist(pt2, bins=50, histtype='step', label='pt2')
+    def plot_transverse_momentum(self, muon_px, muon_py, n_muons):
+        # Calculate transverse momentum for each muon
+        muon_pt = []
+        for event in range(len(n_muons)):
+            if n_muons[event] >= 1:  # Check if there is at least 1 muon in the event
+                for i in range(n_muons[event]):  # Loop over all muons in the event
+                    pt = np.sqrt(muon_px[event][i]**2 + muon_py[event][i]**2)
+                    muon_pt.append(pt)
+
+        # Plot transverse momentum distribution for all muons
+        plt.figure(figsize=(8, 6))
+        plt.hist(muon_pt, bins=50, histtype='step', label='Muon pt', color='darkgreen')
+
+        # Add labels, title, and legend
         plt.xlabel('Transverse Momentum (GeV/c)')
-        plt.ylabel('Events')
-        plt.title('Transverse Momentum Distribution')
-        plt.legend()
+        plt.ylabel('Number of Muons')
+        plt.title('Muon pt Distribution')
+        plt.legend(loc='upper right')
+
+        # Add grid
+        plt.grid(True, linestyle='--', alpha=0.7)
+
+        # Save plot
+        plot_path = os.path.join(self.output_dir, "muon_pt_distribution.png")
+        plt.savefig(plot_path)
+        print(f"Transverse Momentum plot saved to {plot_path}")
+
+        # Show the plot
         plt.show()
-
-    def run_analysis(self, input_file):
-        data = self.load_data(input_file)
-        self.analyze_data(data)
-
-    def shutdown(self):
-        self.executor.shutdown()
 
 if __name__ == "__main__":
-    manager = PipelineManager()
-    manager.run_analysis("DY1011.root")  # Path to your ROOT file
-    manager.shutdown()
+    pipeline = PipelineManager("data/dy.root")
+    pipeline.run_analysis()
 
